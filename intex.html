@@ -60,16 +60,16 @@
 
     <script>
         const channelID = '3397742'; 
-        const readAPIKey = '5SGCY60JEX9WT3DH';
+        const readAPIKey = '5SGCY60JEX9WT3DH'; 
 
-        // Πλήρης παραμετροποίηση και για τα 6 πεδία του ThingSpeak
+        // Απόλυτη ευθυγράμμιση με το screenshot σου
         const fieldConfig = {
-            'field1': { label: 'Βάρος', unit: 'gr', icon: '⚖️', color: '#ff5252', decimals: 0 },
+            'field1': { label: 'Βάρος', unit: 'kg', icon: '⚖️', color: '#ff5252', decimals: 2 },
             'field2': { label: 'Υγρασία', unit: '%', icon: '💧', color: '#448aff', decimals: 1 },
             'field3': { label: 'Θερμοκρασία', unit: '°C', icon: '🌡️', color: '#4caf50', decimals: 1 },
             'field4': { label: 'Μπαταρία', unit: 'V', icon: '🔋', color: '#ffc107', decimals: 2 },
-            'field5': { label: 'Διαφορά (gr)', icon: '📉', color: '#ff4081', decimals: 0 },
-            'field6': { label: 'Σήμα GSM', unit: 'dBm', icon: '📶', color: '#00bcd4', decimals: 0 } 
+            'field5': { label: 'Διαφορά', unit: 'gr', icon: '📉', color: '#ff4081', decimals: 0 },
+            'field6': { label: 'Σήμα GSM', unit: '/30', icon: '📶', color: '#00bcd4', decimals: 0 }
         };
 
         google.charts.load('current', {'packages':['corechart']});
@@ -77,10 +77,8 @@
 
         async function updateHivesInfo() {
             try {
-                // Ασφαλές fetch 400 εγγραφών για τον υπολογισμό του ιστορικού των 21:00
-                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=400`);
-                if (!res.ok) throw new Error("ThingSpeak API Error");
-                
+                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=150`);
+                if(!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 const feeds = data.feeds;
                 if(!feeds || !feeds.length) return;
@@ -94,10 +92,10 @@
                     return parseFloat(closest.field1) || 0;
                 };
 
-                // Υπολογισμός Κεντρικού Banner (gr)
+                // Υπολογισμός Κεντρικού Banner (Μετατροπή kg σε gr)
                 const wToday = getWeightAt21(new Date());
                 const wYest = getWeightAt21(new Date().setDate(new Date().getDate()-1));
-                const diffMain = (wToday - wYest).toFixed(0);
+                const diffMain = ((wToday - wYest) * 1000).toFixed(0);
                 
                 const mainEl = document.getElementById('24hYieldMain');
                 mainEl.innerText = `${diffMain > 0 ? '+' : ''}${diffMain} gr`;
@@ -109,7 +107,7 @@
                 for (let i = 0; i < 7; i++) {
                     const d0 = new Date(); d0.setDate(d0.getDate() - i);
                     const d1 = new Date(); d1.setDate(d1.getDate() - (i + 1));
-                    const diff = (getWeightAt21(d0) - getWeightAt21(d1)).toFixed(0);
+                    const diff = ((getWeightAt21(d0) - getWeightAt21(d1)) * 1000).toFixed(0);
                     
                     const dayDiv = document.createElement('div');
                     dayDiv.className = 'history-day';
@@ -120,19 +118,15 @@
                     historyLog.appendChild(dayDiv);
                 }
             } catch(e) { 
-                console.error("Σφάλμα στο ιστορικό:", e); 
-                document.getElementById('24hYieldMain').innerText = "Αποτυχία λήψης";
+                console.error(e); 
+                document.getElementById('24hYieldMain').innerText = "-- gr";
             }
         }
 
         function loadData() {
             const num = document.getElementById('resultsRange').value;
             fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=${num}`)
-            .then(res => {
-                if(!res.ok) throw new Error("Network error");
-                return res.json();
-            })
-            .then(data => {
+            .then(res => res.json()).then(data => {
                 if(!data.feeds || data.feeds.length === 0) return;
                 
                 const lastFeed = data.feeds[data.feeds.length - 1];
@@ -142,12 +136,11 @@
                 const dashboard = document.getElementById('dashboard');
                 dashboard.innerHTML = '';
                 
-                // Δημιουργία καρτών αυτόματα και για τα 6 πεδία
                 Object.keys(fieldConfig).forEach(key => {
                     const conf = fieldConfig[key];
                     const vals = data.feeds.map(f => parseFloat(f[key])).filter(v => !isNaN(v));
                     
-                    if (vals.length === 0) return; 
+                    if(vals.length === 0) return;
 
                     const card = document.createElement('div');
                     card.className = 'card';
@@ -165,7 +158,7 @@
                     dashboard.appendChild(card);
                     drawChart(data.feeds, key, conf.label, conf.color);
                 });
-            }).catch(err => console.error("Σφάλμα στα διαγράμματα:", err));
+            }).catch(err => console.error(err));
         }
 
         function drawChart(feeds, key, label, color) {
@@ -187,8 +180,6 @@
                 });
             }
         }
-        
-        // Ανανέωση δεδομένων ανά 60 δευτερόλεπτα
         setInterval(() => { loadData(); updateHivesInfo(); }, 60000);
     </script>
 </body>
