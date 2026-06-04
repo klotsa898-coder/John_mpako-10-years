@@ -38,11 +38,11 @@
 <body>
 
     <div class="main-yield-banner">
-        <div class="main-yield-label">ΔΙΑΦΟΡΑ 24Ω (21:00-21:00)</div>
+        <div class="main-yield-label">ΔΙΑΦΟΡΑ 24Ω</div>
         <div id="24hYieldMain" class="main-yield-val">--</div>
     </div>
 
-    <div style="font-size: 0.7em; color: #888; margin-bottom: 5px; text-align: center;">ΙΣΤΟΡΙΚΟ 7 ΗΜΕΡΩΝ (σε gr)</div>
+    <div style="font-size: 0.7em; color: #888; margin-bottom: 5px; text-align: center;">ΙΣΤΟΡΙΚΟ ΜΕΤΑΒΟΛΩΝ (σε gr)</div>
     <div class="history-container" id="historyLog"></div>
 
     <div class="last-update" id="mainUpdate">🕒 Φόρτωση...</div>
@@ -62,9 +62,8 @@
         const channelID = '3397742'; 
         const readAPIKey = '5SGCY60JEX9WT3DH'; 
 
-        // Απόλυτη ευθυγράμμιση με το screenshot σου
         const fieldConfig = {
-            'field1': { label: 'Βάρος', unit: 'kg', icon: '⚖️', color: '#ff5252', decimals: 2 },
+            'field1': { label: 'Βάρος', unit: 'kg', icon: '⚖️', color: '#ff5252', decimals: 0 }, // Τα δεκαδικά έγιναν 0
             'field2': { label: 'Υγρασία', unit: '%', icon: '💧', color: '#448aff', decimals: 1 },
             'field3': { label: 'Θερμοκρασία', unit: '°C', icon: '🌡️', color: '#4caf50', decimals: 1 },
             'field4': { label: 'Μπαταρία', unit: 'V', icon: '🔋', color: '#ffc107', decimals: 2 },
@@ -77,43 +76,48 @@
 
         async function updateHivesInfo() {
             try {
-                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=150`);
+                // Αυξάνουμε ελαφρώς τις εγγραφές για να έχουμε σίγουρα δεδομένα ημερών
+                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=200`);
                 if(!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 const feeds = data.feeds;
                 if(!feeds || !feeds.length) return;
 
-                const getWeightAt21 = (date) => {
-                    const target = new Date(date);
-                    target.setHours(21, 0, 0);
-                    const closest = feeds.reduce((prev, curr) => 
-                        Math.abs(new Date(curr.created_at) - target) < Math.abs(new Date(prev.created_at) - target) ? curr : prev
-                    );
-                    return parseFloat(closest.field1) || 0;
+                // Συνάρτηση που βρίσκει την τελευταία τιμή διαφοράς (field5) για μια συγκεκριμένη ημερολογιακή ημέρα
+                const getDiffForDay = (daysAgo) => {
+                    const targetDate = new Date();
+                    targetDate.setDate(targetDate.getDate() - daysAgo);
+                    const targetString = targetDate.toLocaleDateString('en-CA'); // Μορφή YYYY-MM-DD
+                    
+                    // Φιλτράρουμε τα feeds εκείνης της ημέρας
+                    const dayFeeds = feeds.filter(f => f.created_at.startsWith(targetString));
+                    if(dayFeeds.length > 0) {
+                        // Παίρνουμε την τελευταία μέτρηση της ημέρας
+                        return parseFloat(dayFeeds[dayFeeds.length - 1].field5) || 0;
+                    }
+                    return 0;
                 };
 
-                // Υπολογισμός Κεντρικού Banner (Μετατροπή kg σε gr)
-                const wToday = getWeightAt21(new Date());
-                const wYest = getWeightAt21(new Date().setDate(new Date().getDate()-1));
-                const diffMain = ((wToday - wYest) * 1000).toFixed(0);
+                // Το κεντρικό banner δείχνει την τελευταία καταγεγραμμένη διαφορά (τρέχουσα ημέρα)
+                const lastFeedWithDiff = [...feeds].reverse().find(f => f.field5 !== null && !isNaN(parseFloat(f.field5)));
+                const diffMain = lastFeedWithDiff ? parseFloat(lastFeedWithDiff.field5) : 0;
                 
                 const mainEl = document.getElementById('24hYieldMain');
-                mainEl.innerText = `${diffMain > 0 ? '+' : ''}${diffMain} gr`;
+                mainEl.innerText = `${diffMain > 0 ? '+' : ''}${diffMain.toFixed(0)} gr`;
                 mainEl.style.color = diffMain >= 0 ? '#4caf50' : '#ff5252';
 
-                // Ιστορικό 7 ημερών σε gr
+                // Ιστορικό 7 ημερών βασισμένο στο field5 της κάθε ημέρας
                 const historyLog = document.getElementById('historyLog');
                 historyLog.innerHTML = '';
                 for (let i = 0; i < 7; i++) {
-                    const d0 = new Date(); d0.setDate(d0.getDate() - i);
-                    const d1 = new Date(); d1.setDate(d1.getDate() - (i + 1));
-                    const diff = ((getWeightAt21(d0) - getWeightAt21(d1)) * 1000).toFixed(0);
+                    const d = new Date(); d.setDate(d.getDate() - i);
+                    const diff = getDiffForDay(i);
                     
                     const dayDiv = document.createElement('div');
                     dayDiv.className = 'history-day';
                     dayDiv.innerHTML = `
-                        <div class="hist-date">${d0.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'})}</div>
-                        <div class="hist-val" style="color:${diff >= 0 ? '#4caf50' : '#ff5252'}">${diff > 0 ? '+' : ''}${diff}g</div>
+                        <div class="hist-date">${d.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'})}</div>
+                        <div class="hist-val" style="color:${diff >= 0 ? '#4caf50' : '#ff5252'}">${diff > 0 ? '+' : ''}${diff.toFixed(0)}g</div>
                     `;
                     historyLog.appendChild(dayDiv);
                 }
@@ -183,4 +187,5 @@
         setInterval(() => { loadData(); updateHivesInfo(); }, 60000);
     </script>
 </body>
-</html>
+    </html>
+    
