@@ -32,6 +32,11 @@
         .value-display { font-size: 2.2em; font-weight: bold; margin: 5px 0; display: flex; align-items: baseline; }
         .stats-row { display: flex; gap: 10px; font-size: 0.75em; color: #777; margin-bottom: 10px; border-top: 1px solid #2a2a2a; padding-top: 5px; }
         .chart-box { width: 100%; height: 160px; }
+        
+        /* Κάρτα για το μεγάλο γράφημα πορείας */
+        .wide-card { background: var(--card); border-radius: 15px; padding: 15px; margin-top: 15px; border-top: 5px solid #ffca28; }
+        .wide-chart-box { width: 100%; height: 250px; }
+
         select { background: #333; color: white; border: none; padding: 8px; border-radius: 8px; font-size: 11px; }
     </style>
 </head>
@@ -48,7 +53,7 @@
     <div class="last-update" id="mainUpdate">🕒 Φόρτωση...</div>
 
     <div class="toolbar">
-        <span style="font-size: 0.75em; color: #888;">Προβολή:</span>
+        <span style="font-size: 0.75em; color: #888;">Προβολή τρεχουσών μετρήσεων:</span>
         <select id="resultsRange" onchange="loadData()">
             <option value="10">10 μετρήσεις</option>
             <option value="20" selected>20 μετρήσεις</option>
@@ -57,6 +62,14 @@
     </div>
 
     <div id="dashboard" class="grid-container"></div>
+
+    <div class="wide-card">
+        <div class="header-flex">
+            <h3>Καμπύλη Πορείας Βάρους (7 Ημέρες)</h3>
+            <span>📈</span>
+        </div>
+        <div id="weekly_trend_chart" class="wide-chart-box"></div>
+    </div>
 
     <script>
         const channelID = '3397742'; 
@@ -76,32 +89,28 @@
 
         async function updateHivesInfo() {
             try {
-                // Ζητάμε 400 εγγραφές για μέγιστο δυνατό ιστορικό βάθος
-                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=400`);
+                // Ζητάμε 800 εγγραφές για να έχουμε σίγουρα γεμάτες 7 ημέρες ιστορικού
+                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=800`);
                 if(!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 const feeds = data.feeds;
                 if(!feeds || !feeds.length) return;
 
-                // Επιστρέφει το βάρος κοντά στις 21:00. Αν δεν βρει δεδομένα για τη μέρα, επιστρέφει null αντί για 0.
                 const getWeightAt21 = (date) => {
                     const target = new Date(date);
                     target.setHours(21, 0, 0);
+                    const targetDateStr = target.toLocaleDateString('en-CA'); 
                     
-                    // Φιλτράρουμε μόνο τις εγγραφές της συγκεκριμένης ημερομηνίας
-                    const targetDateStr = target.toLocaleDateString('en-CA'); // YYYY-MM-DD
                     const dayFeeds = feeds.filter(f => f.created_at.startsWith(targetDateStr) && f.field1 !== null && !isNaN(parseFloat(f.field1)));
-                    
                     if(dayFeeds.length === 0) return null;
 
-                    // Βρίσκουμε την πιο κοντινή μέτρηση στις 21:00
                     const closest = dayFeeds.reduce((prev, curr) => 
                         Math.abs(new Date(curr.created_at) - target) < Math.abs(new Date(prev.created_at) - target) ? curr : prev
                     );
                     return parseFloat(closest.field1);
                 };
 
-                // Υπολογισμός Κεντρικού Banner
+                // 24h Banner
                 const wToday = getWeightAt21(new Date());
                 const wYest = getWeightAt21(new Date().setDate(new Date().getDate() - 1));
                 
@@ -111,12 +120,20 @@
                     mainEl.innerText = `${diffMain > 0 ? '+' : ''}${diffMain} gr`;
                     mainEl.style.color = diffMain >= 0 ? '#4caf50' : '#ff5252';
                 } else {
-                    mainEl.innerText = "-- gr"; // Προστασία αν λείπουν δεδομένα
+                    mainEl.innerText = "-- gr";
                 }
 
-                // Υπολογισμός Ιστορικού 7 ημερών
+                // Χτίσιμο Ιστορικού 7 ημερών ΚΑΙ δεδομένων για το μεγάλο γράφημα
                 const historyLog = document.getElementById('historyLog');
                 historyLog.innerHTML = '';
+                
+                const trendDataTable = new google.visualization.DataTable();
+                trendDataTable.addColumn('string', 'Ημέρα');
+                trendDataTable.addColumn('number', 'Βάρος (kg)');
+
+                // Πίνακας για να αποθηκεύσουμε ανάποδα τα δεδομένα του γραφήματος (από την παλαιότερη στη νεότερη μέρα)
+                let chartRows = [];
+
                 for (let i = 0; i < 7; i++) {
                     const d0 = new Date(); d0.setDate(d0.getDate() - i);
                     const d1 = new Date(); d1.setDate(d1.getDate() - (i + 1));
@@ -127,25 +144,50 @@
                     const dayDiv = document.createElement('div');
                     dayDiv.className = 'history-day';
                     
-                    // Αν έχουμε έγκυρα δεδομένα και για τις δύο μέρες, κάνουμε την αφαίρεση
+                    const dayLabel = d0.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'});
+
                     if (weight0 !== null && weight1 !== null) {
                         const diff = ((weight0 - weight1) * 1000).toFixed(0);
                         dayDiv.innerHTML = `
-                            <div class="hist-date">${d0.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'})}</div>
+                            <div class="hist-date">${dayLabel}</div>
                             <div class="hist-val" style="color:${diff >= 0 ? '#4caf50' : '#ff5252'}">${diff > 0 ? '+' : ''}${diff}g</div>
                         `;
+                        chartRows.unshift([dayLabel, weight0]); // Προσθήκη στην αρχή για σωστή χρονική σειρά στο γράφημα
                     } else {
-                        // Αν λείπουν δεδομένα, δείχνει αναμονή αντί για τεράστια νούμερα
                         dayDiv.innerHTML = `
-                            <div class="hist-date">${d0.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'})}</div>
+                            <div class="hist-date">${dayLabel}</div>
                             <div class="hist-val" style="color:#666">--</div>
                         `;
+                        if (weight0 !== null) chartRows.unshift([dayLabel, weight0]);
                     }
                     historyLog.appendChild(dayDiv);
                 }
+
+                // Σχεδίαση Μεγάλου Γραφήματος Πορείας
+                if(chartRows.length > 0) {
+                    trendDataTable.addRows(chartRows);
+                    const trendChartEl = document.getElementById('weekly_trend_chart');
+                    if(trendChartEl) {
+                        new google.visualization.LineChart(trendChartEl).draw(trendDataTable, {
+                            backgroundColor: 'transparent',
+                            curveType: 'function',
+                            legend: 'none',
+                            pointSize: 6,
+                            hAxis: { textStyle: {color:'#888', fontSize: 10} },
+                            vAxis: { 
+                                gridlines: {color:'#2a2a2a'}, 
+                                textStyle: {color:'#888'},
+                                title: 'Κιλά (kg)',
+                                titleTextStyle: {color: '#666', fontSize: 11}
+                            },
+                            colors: ['#ffca28'], 
+                            chartArea: {width:'85%', height:'75%'}
+                        });
+                    }
+                }
+
             } catch(e) { 
                 console.error(e); 
-                document.getElementById('24hYieldMain').innerText = "-- gr";
             }
         }
 
