@@ -1,4 +1,4 @@
-  <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="el">
 <head>
     <meta charset="UTF-8">
@@ -76,38 +76,45 @@
 
         async function updateHivesInfo() {
             try {
-                // Ζητάμε 400 εγγραφές για να έχουμε αρκετό βάθος ημερών για τον υπολογισμό των 21:00
+                // Ζητάμε 400 εγγραφές για μέγιστο δυνατό ιστορικό βάθος
                 const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=400`);
                 if(!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 const feeds = data.feeds;
                 if(!feeds || !feeds.length) return;
 
-                // Συνάρτηση που επιστρέφει το βάρος (field1) που καταγράφηκε πιο κοντά στις 21:00 μιας συγκεκριμένης ημερομηνίας
+                // Επιστρέφει το βάρος κοντά στις 21:00. Αν δεν βρει δεδομένα για τη μέρα, επιστρέφει null αντί για 0.
                 const getWeightAt21 = (date) => {
                     const target = new Date(date);
                     target.setHours(21, 0, 0);
                     
-                    // Φιλτράρουμε μόνο τα feeds που έχουν έγκυρη τιμή βάρους
-                    const validFeeds = feeds.filter(f => f.field1 !== null && !isNaN(parseFloat(f.field1)));
-                    if(validFeeds.length === 0) return 0;
+                    // Φιλτράρουμε μόνο τις εγγραφές της συγκεκριμένης ημερομηνίας
+                    const targetDateStr = target.toLocaleDateString('en-CA'); // YYYY-MM-DD
+                    const dayFeeds = feeds.filter(f => f.created_at.startsWith(targetDateStr) && f.field1 !== null && !isNaN(parseFloat(f.field1)));
+                    
+                    if(dayFeeds.length === 0) return null;
 
-                    const closest = validFeeds.reduce((prev, curr) => 
+                    // Βρίσκουμε την πιο κοντινή μέτρηση στις 21:00
+                    const closest = dayFeeds.reduce((prev, curr) => 
                         Math.abs(new Date(curr.created_at) - target) < Math.abs(new Date(prev.created_at) - target) ? curr : prev
                     );
-                    return parseFloat(closest.field1) || 0;
+                    return parseFloat(closest.field1);
                 };
 
-                // Υπολογισμός Κεντρικού Banner: (Βάρος στις 21:00 Σήμερα) ΜΕΙΟΝ (Βάρος στις 21:00 Εχθές)
+                // Υπολογισμός Κεντρικού Banner
                 const wToday = getWeightAt21(new Date());
                 const wYest = getWeightAt21(new Date().setDate(new Date().getDate() - 1));
-                const diffMain = ((wToday - wYest) * 1000).toFixed(0);
                 
                 const mainEl = document.getElementById('24hYieldMain');
-                mainEl.innerText = `${diffMain > 0 ? '+' : ''}${diffMain} gr`;
-                mainEl.style.color = diffMain >= 0 ? '#4caf50' : '#ff5252';
+                if (wToday !== null && wYest !== null) {
+                    const diffMain = ((wToday - wYest) * 1000).toFixed(0);
+                    mainEl.innerText = `${diffMain > 0 ? '+' : ''}${diffMain} gr`;
+                    mainEl.style.color = diffMain >= 0 ? '#4caf50' : '#ff5252';
+                } else {
+                    mainEl.innerText = "-- gr"; // Προστασία αν λείπουν δεδομένα
+                }
 
-                // Υπολογισμός Ιστορικού 7 ημερών (κάθε μέρα συγκρίνεται με την προηγούμενή της στις 21:00)
+                // Υπολογισμός Ιστορικού 7 ημερών
                 const historyLog = document.getElementById('historyLog');
                 historyLog.innerHTML = '';
                 for (let i = 0; i < 7; i++) {
@@ -116,14 +123,24 @@
                     
                     const weight0 = getWeightAt21(d0);
                     const weight1 = getWeightAt21(d1);
-                    const diff = ((weight0 - weight1) * 1000).toFixed(0);
                     
                     const dayDiv = document.createElement('div');
                     dayDiv.className = 'history-day';
-                    dayDiv.innerHTML = `
-                        <div class="hist-date">${d0.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'})}</div>
-                        <div class="hist-val" style="color:${diff >= 0 ? '#4caf50' : '#ff5252'}">${diff > 0 ? '+' : ''}${diff}g</div>
-                    `;
+                    
+                    // Αν έχουμε έγκυρα δεδομένα και για τις δύο μέρες, κάνουμε την αφαίρεση
+                    if (weight0 !== null && weight1 !== null) {
+                        const diff = ((weight0 - weight1) * 1000).toFixed(0);
+                        dayDiv.innerHTML = `
+                            <div class="hist-date">${d0.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'})}</div>
+                            <div class="hist-val" style="color:${diff >= 0 ? '#4caf50' : '#ff5252'}">${diff > 0 ? '+' : ''}${diff}g</div>
+                        `;
+                    } else {
+                        // Αν λείπουν δεδομένα, δείχνει αναμονή αντί για τεράστια νούμερα
+                        dayDiv.innerHTML = `
+                            <div class="hist-date">${d0.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'})}</div>
+                            <div class="hist-val" style="color:#666">--</div>
+                        `;
+                    }
                     historyLog.appendChild(dayDiv);
                 }
             } catch(e) { 
@@ -192,5 +209,4 @@
         setInterval(() => { loadData(); updateHivesInfo(); }, 60000);
     </script>
 </body>
-    </html>
-    
+</html>
