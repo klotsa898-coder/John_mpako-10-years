@@ -69,7 +69,7 @@
         <select id="resultsRange" onchange="loadData()">
             <option value="10">10 μετρήσεις</option>
             <option value="20" selected>20 μετρήσεις</option>
-            <option value="50">50 με tρήσεις</option>
+            <option value="50">50 μετρήσεις</option>
         </select>
     </div>
 
@@ -93,27 +93,49 @@
 
         async function updateHivesInfo() {
             try {
-                // Ζητάμε 500 εγγραφές για να έχουμε πλήρη κάλυψη των 2 τελευταίων 24ώρων
+                // Ζητάμε 500 εγγραφές για να έχουμε πλήρη κάλυψη των τελευταίων ημερών
                 const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=500`);
                 if(!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 const feeds = data.feeds;
                 if(!feeds || !feeds.length) return;
 
-                // Βοηθητική συνάρτηση για εύρεση βάρους στις 21:00
-                const getWeightAt21 = (date) => {
-                    const target = new Date(date);
-                    target.setHours(21, 0, 0);
-                    const targetDateStr = target.toLocaleDateString('en-CA');
-                    const dayFeeds = feeds.filter(f => f.created_at.startsWith(targetDateStr) && f.field1 !== null);
+                // ΔΙΟΡΘΩΜΕΝΗ ΣΥΝΑΡΤΗΣΗ: Εύρεση βάρους κοντά στις 21:00 (σε τοπική ώρα)
+                const getWeightAt21 = (targetDate) => {
+                    const target = new Date(targetDate);
+                    target.setHours(21, 0, 0, 0);
+
+                    // Αν ζητάμε το "Σήμερα" και η ώρα 21:00 δεν έχει έρθει ακόμα, 
+                    // στοχεύουμε στην τελευταία διαθέσιμη τρέχουσα μέτρηση
+                    const now = new Date();
+                    if (target.toDateString() === now.toDateString() && now < target) {
+                        target.setTime(now.getTime());
+                    }
+
+                    // Φιλτράρουμε τις μετρήσεις που ανήκουν ΜΟΝΟ στην ίδια ημερολογιακή ημέρα
+                    const dayFeeds = feeds.filter(f => {
+                        if (f.field1 === null || isNaN(parseFloat(f.field1))) return false;
+                        const fDate = new Date(f.created_at); // Αυτόματη μετατροπή σε τοπική ώρα
+                        return fDate.toDateString() === target.toDateString();
+                    });
+
                     if(dayFeeds.length === 0) return null;
-                    const closest = dayFeeds.reduce((prev, curr) => Math.abs(new Date(curr.created_at) - target) < Math.abs(new Date(prev.created_at) - target) ? curr : prev);
+
+                    // Βρίσκουμε την εγγραφή που είναι πιο κοντά χρονικά στο target μας
+                    const closest = dayFeeds.reduce((prev, curr) => {
+                        const prevDiff = Math.abs(new Date(prev.created_at) - target);
+                        const currDiff = Math.abs(new Date(curr.created_at) - target);
+                        return currDiff < prevDiff ? curr : prev;
+                    });
+
                     return parseFloat(closest.field1);
                 };
 
                 // 24h Banner
                 const wToday = getWeightAt21(new Date());
-                const wYest = getWeightAt21(new Date().setDate(new Date().getDate() - 1));
+                const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
+                const wYest = getWeightAt21(yestDate);
+                
                 const mainEl = document.getElementById('24hYieldMain');
                 if (wToday !== null && wYest !== null) {
                     const diffMain = ((wToday - wYest) * 1000).toFixed(0);
@@ -145,9 +167,8 @@
                 compareTable.addColumn('number', 'Χθες');
                 compareTable.addColumn('number', 'Σήμερα');
 
-                const todayStr = new Date().toLocaleDateString('en-CA');
-                const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
-                const yestStr = yestDate.toLocaleDateString('en-CA');
+                const todayStr = new Date().toDateString();
+                const yestStr = yestDate.toDateString();
 
                 // Οργάνωση δεδομένων ανά ώρα (00 έως 23)
                 let hourlyData = {};
@@ -160,7 +181,7 @@
                     if(f.field1 === null || isNaN(parseFloat(f.field1))) return;
                     const fDate = new Date(f.created_at);
                     const fHourStr = fDate.getHours().toString().padStart(2, '0') + ':00';
-                    const fDateStr = fDate.toLocaleDateString('en-CA');
+                    const fDateStr = fDate.toDateString();
 
                     if(fDateStr === yestStr) {
                         hourlyData[fHourStr].yest = parseFloat(f.field1);
@@ -169,18 +190,18 @@
                     }
                 });
 
-                // Γέμισμα κενών (interpolation) για να μην σπάει η γραμμή αν λείπει κάποια ώρα
+                // Γέμισμα κενών (interpolation)
                 let lastYest = null, lastToday = null;
                 Object.keys(hourlyData).forEach(hour => {
                     if(hourlyData[hour].yest !== null) lastYest = hourlyData[hour].yest;
                     else if(lastYest !== null) hourlyData[hour].yest = lastYest;
 
                     if(hourlyData[hour].today !== null) lastToday = hourlyData[hour].today;
-                    // Δεν γεμίζουμε το "Σήμερα" για μελλοντικές ώρες της ημέρας
+                    else if(lastToday !== null && parseInt(hour) <= new Date().getHours()) hourlyData[hour].today = lastToday;
+                    
                     if(parseInt(hour) > new Date().getHours()) hourlyData[hour].today = null;
                 });
 
-                // Μετατροπή σε γραμμές για το Google Chart
                 Object.keys(hourlyData).sort().forEach(hour => {
                     compareTable.addRow([hour, hourlyData[hour].yest, hourlyData[hour].today]);
                 });
@@ -194,7 +215,7 @@
                         pointSize: 2,
                         hAxis: { 
                             textStyle: {color:'#888', fontSize: 10},
-                            showTextEvery: 3 // Δείχνει την ώρα ανά 3 ώρες για να μην στριμώχνονται
+                            showTextEvery: 3
                         },
                         vAxis: { 
                             gridlines: {color:'#2a2a2a'}, 
@@ -202,7 +223,7 @@
                             title: 'Βάρος (kg)',
                             titleTextStyle: {color: '#666', fontSize: 11}
                         },
-                        colors: ['#ffca28', '#4caf50'], // Κίτρινο για Χθες, Πράσινο για Σήμερα
+                        colors: ['#ffca28', '#4caf50'], 
                         chartArea: {width:'85%', height:'80%'}
                     });
                 }
@@ -270,4 +291,5 @@
         setInterval(() => { loadData(); updateHivesInfo(); }, 60000);
     </script>
 </body>
-</html>
+    </html>
+    
