@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Beekeeping Pro - Day Comparison</title>
+    <title>Beekeeping Pro - 15 Day Comparison</title>
     <script src="https://www.gstatic.com/charts/loader.js"></script>
     <style>
         :root { --bg: #121212; --card: #1e1e1e; --text: #ffffff; --accent: #1a73e8; --border: #333; }
@@ -20,10 +20,6 @@
 
         .last-update { font-size: 0.75em; color: #ffca28; text-align: center; margin-bottom: 10px; background: #252525; padding: 8px; border-radius: 10px; border: 1px solid #444; }
         
-        /* Κουμπί Reset */
-        .reset-btn { display: block; width: 100%; max-width: 200px; margin: 10px auto 15px auto; background: #d32f2f; color: white; border: none; padding: 10px 15px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 0.85em; transition: background 0.2s; text-align: center; }
-        .reset-btn:hover { background: #b71c1c; }
-
         .toolbar { background: var(--card); padding: 10px; border-radius: 12px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); }
         .grid-container { display: grid; grid-template-columns: 1fr; gap: 15px; }
         @media(min-width: 600px) { .grid-container { grid-template-columns: 1fr 1fr; } }
@@ -51,12 +47,10 @@
         <div id="24hYieldMain" class="main-yield-val">--</div>
     </div>
 
-    <div style="font-size: 0.7em; color: #888; margin-bottom: 5px; text-align: center;">ΙΣΤΟΡΙΚΟ 7 ΗΜΕΡΩΝ (σε gr)</div>
+    <div style="font-size: 0.7em; color: #888; margin-bottom: 5px; text-align: center;">ΙΣΤΟΡΙΚΟ 15 ΗΜΕΡΩΝ (σε gr)</div>
     <div class="history-container" id="historyLog"></div>
 
     <div class="last-update" id="mainUpdate">🕒 Φόρτωση...</div>
-    
-    <button class="reset-btn" onclick="resetDashboard()">🔄 Reset Δεδομένων</button>
 
     <div class="wide-card">
         <div class="header-flex">
@@ -84,7 +78,6 @@
     <script>
         const channelID = '3397742'; 
         const readAPIKey = '5SGCY60JEX9WT3DH'; 
-        let isReset = false; // Μεταβλητή ελέγχου για το reset
 
         const fieldConfig = {
             'field1': { label: 'Βάρος', unit: 'kg', icon: '⚖️', color: '#ff5252', decimals: 0 }, 
@@ -98,48 +91,24 @@
         google.charts.load('current', {'packages':['corechart']});
         google.charts.setOnLoadCallback(() => { loadData(); updateHivesInfo(); });
 
-        // ΣΥΝΑΡΤΗΣΗ RESET: Καθαρίζει τα πάντα στην οθόνη
-        function resetDashboard() {
-            isReset = true;
-            
-            // Καθαρισμός κειμένων
-            document.getElementById('24hYieldMain').innerText = "-- gr";
-            document.getElementById('24hYieldMain').style.color = "#888";
-            document.getElementById('mainUpdate').innerText = "🔄 Τα δεδομένα καθαρίστηκαν. Κάντε ανανέωση σελίδας για ανάκτηση.";
-            
-            // Καθαρισμός Ιστορικού 7 ημερών
-            const historyLog = document.getElementById('historyLog');
-            historyLog.innerHTML = '';
-            for (let i = 0; i < 7; i++) {
-                const d0 = new Date(); d0.setDate(d0.getDate() - i);
-                const dayLabel = d0.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'});
-                const dayDiv = document.createElement('div');
-                dayDiv.className = 'history-day';
-                dayDiv.innerHTML = `<div class="hist-date">${dayLabel}</div><div class="hist-val" style="color:#666">--</div>`;
-                historyLog.appendChild(dayDiv);
-            }
-
-            // Καθαρισμός γραφημάτων και dashboard
-            document.getElementById('compare_chart').innerHTML = '<div style="color:#666; text-align:center; padding-top:100px;">Δεν υπάρχουν δεδομένα</div>';
-            document.getElementById('dashboard').innerHTML = '';
-        }
-
         async function updateHivesInfo() {
-            if (isReset) return; // Αν πατήθηκε το reset, σταματάει η φόρτωση
             try {
-                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&days=10`);
+                // Αυξάνουμε τις ημέρες σε 20 για να καλύψουμε άνετα το ιστορικό 15 ημερών
+                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&days=20`);
                 if(!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 const feeds = data.feeds;
                 if(!feeds || !feeds.length) return;
 
+                // Συναρτηση ακριβείας για λήψη βάρους αυστηρά στις 21:00
                 const getWeightAt21 = (targetDate) => {
                     const target = new Date(targetDate);
                     target.setHours(21, 0, 0, 0);
 
                     const now = new Date();
-                    if (target.toDateString() === now.toDateString() && now < target) {
-                        target.setTime(now.getTime());
+                    // ΚΑΝΟΝΑΣ 12 ΜΕΣΑΝΥΧΤΑ: Αν η ζητούμενη μέρα είναι η σημερινή και δεν έχουμε φτάσει ακόμα 21:00, επέστρεψε null (δείξε --)
+                    if (target.toDateString() === now.toDateString() && now.getHours() < 21) {
+                        return null;
                     }
 
                     const dayFeeds = feeds.filter(f => {
@@ -150,6 +119,7 @@
 
                     if(dayFeeds.length === 0) return null;
 
+                    // Επιλογή της μέτρησης που είναι πιο κοντά στις 21:00
                     const closest = dayFeeds.reduce((prev, curr) => {
                         const prevDiff = Math.abs(new Date(prev.created_at) - target);
                         const currDiff = Math.abs(new Date(curr.created_at) - target);
@@ -159,11 +129,13 @@
                     return parseFloat(closest.field1);
                 };
 
+                // Κεντρικό Banner 24ώρου (21:00 - 21:00)
                 const wToday = getWeightAt21(new Date());
                 const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
                 const wYest = getWeightAt21(yestDate);
                 
                 const mainEl = document.getElementById('24hYieldMain');
+                
                 if (wToday !== null && wYest !== null) {
                     const diffMain = ((wToday - wYest) * 1000).toFixed(0);
                     mainEl.innerText = `${diffMain > 0 ? '+' : ''}${diffMain} gr`;
@@ -173,9 +145,10 @@
                     mainEl.style.color = "#888";
                 }
 
+                // Σταδιακό Γέμισμα Ιστορικού 15 Ημερών
                 const historyLog = document.getElementById('historyLog');
                 historyLog.innerHTML = '';
-                for (let i = 0; i < 7; i++) {
+                for (let i = 0; i < 15; i++) {
                     const d0 = new Date(); d0.setDate(d0.getDate() - i);
                     const d1 = new Date(); d1.setDate(d1.getDate() - (i + 1));
                     const weight0 = getWeightAt21(d0); 
@@ -194,6 +167,7 @@
                     historyLog.appendChild(dayDiv);
                 }
 
+                // --- ΔΗΜΙΟΥΡΓΙΑ ΓΡΑΦΗΜΑΤΟΣ ΧΘΕΣ vs ΣΗΜΕΡΑ ---
                 const compareTable = new google.visualization.DataTable();
                 compareTable.addColumn('string', 'Ώρα');
                 compareTable.addColumn('number', 'Χθες');
@@ -245,15 +219,15 @@
                         colors: ['#ffca28', '#4caf50'], chartArea: {width:'85%', height:'80%'}
                     });
                 }
+
             } catch(e) { console.error(e); }
         }
 
         function loadData() {
-            if (isReset) return;
             const num = document.getElementById('resultsRange').value;
             fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=${num}`)
             .then(res => res.json()).then(data => {
-                if(!data.feeds || data.feeds.length === 0 || isReset) return;
+                if(!data.feeds || data.feeds.length === 0) return;
                 
                 const lastFeed = data.feeds[data.feeds.length - 1];
                 const lastDate = new Date(lastFeed.created_at);
@@ -305,7 +279,7 @@
                 });
             }
         }
-        setInterval(() => { if(!isReset) { loadData(); updateHivesInfo(); } }, 60000);
+        setInterval(() => { loadData(); updateHivesInfo(); }, 60000);
     </script>
 </body>
     </html>
