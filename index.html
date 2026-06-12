@@ -93,35 +93,34 @@
 
         async function updateHivesInfo() {
             try {
-                // Ζητάμε 500 εγγραφές για να έχουμε πλήρη κάλυψη των τελευταίων ημερών
-                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&results=500`);
+                // Ζητάμε δεδομένα βάσει ημερών (τελευταίες 10 ημέρες) για να μην χάνουμε καμία καταγραφή λόγω timezone
+                const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&days=10`);
                 if(!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 const feeds = data.feeds;
                 if(!feeds || !feeds.length) return;
 
-                // ΔΙΟΡΘΩΜΕΝΗ ΣΥΝΑΡΤΗΣΗ: Εύρεση βάρους κοντά στις 21:00 (σε τοπική ώρα)
+                // Εύρεση βάρους κοντά στις 21:00 (σε τοπική ώρα)
                 const getWeightAt21 = (targetDate) => {
                     const target = new Date(targetDate);
                     target.setHours(21, 0, 0, 0);
 
-                    // Αν ζητάμε το "Σήμερα" και η ώρα 21:00 δεν έχει έρθει ακόμα, 
-                    // στοχεύουμε στην τελευταία διαθέσιμη τρέχουσα μέτρηση
                     const now = new Date();
+                    // Αν είμαστε στο "Σήμερα" και δεν έχουμε φτάσει ακόμα 21:00, στοχεύουμε στην τρέχουσα ώρα
                     if (target.toDateString() === now.toDateString() && now < target) {
                         target.setTime(now.getTime());
                     }
 
-                    // Φιλτράρουμε τις μετρήσεις που ανήκουν ΜΟΝΟ στην ίδια ημερολογιακή ημέρα
+                    // Φιλτράρισμα με βάση την πραγματική τοπική ημερομηνία
                     const dayFeeds = feeds.filter(f => {
                         if (f.field1 === null || isNaN(parseFloat(f.field1))) return false;
-                        const fDate = new Date(f.created_at); // Αυτόματη μετατροπή σε τοπική ώρα
+                        const fDate = new Date(f.created_at);
                         return fDate.toDateString() === target.toDateString();
                     });
 
                     if(dayFeeds.length === 0) return null;
 
-                    // Βρίσκουμε την εγγραφή που είναι πιο κοντά χρονικά στο target μας
+                    // Εύρεση της πλησιέστερης χρονικά εγγραφής
                     const closest = dayFeeds.reduce((prev, curr) => {
                         const prevDiff = Math.abs(new Date(prev.created_at) - target);
                         const currDiff = Math.abs(new Date(curr.created_at) - target);
@@ -141,7 +140,10 @@
                     const diffMain = ((wToday - wYest) * 1000).toFixed(0);
                     mainEl.innerText = `${diffMain > 0 ? '+' : ''}${diffMain} gr`;
                     mainEl.style.color = diffMain >= 0 ? '#4caf50' : '#ff5252';
-                } else { mainEl.innerText = "-- gr"; }
+                } else { 
+                    mainEl.innerText = "-- gr"; 
+                    mainEl.style.color = "#888";
+                }
 
                 // Ιστορικό 7 ημερών
                 const historyLog = document.getElementById('historyLog');
@@ -149,9 +151,13 @@
                 for (let i = 0; i < 7; i++) {
                     const d0 = new Date(); d0.setDate(d0.getDate() - i);
                     const d1 = new Date(); d1.setDate(d1.getDate() - (i + 1));
-                    const weight0 = getWeightAt21(d0); const weight1 = getWeightAt21(d1);
-                    const dayDiv = document.createElement('div'); dayDiv.className = 'history-day';
+                    const weight0 = getWeightAt21(d0); 
+                    const weight1 = getWeightAt21(d1);
+                    
+                    const dayDiv = document.createElement('div'); 
+                    dayDiv.className = 'history-day';
                     const dayLabel = d0.toLocaleDateString('el-GR', {weekday:'short', day:'numeric'});
+                    
                     if (weight0 !== null && weight1 !== null) {
                         const diff = ((weight0 - weight1) * 1000).toFixed(0);
                         dayDiv.innerHTML = `<div class="hist-date">${dayLabel}</div><div class="hist-val" style="color:${diff >= 0 ? '#4caf50' : '#ff5252'}">${diff > 0 ? '+' : ''}${diff}g</div>`;
@@ -170,7 +176,6 @@
                 const todayStr = new Date().toDateString();
                 const yestStr = yestDate.toDateString();
 
-                // Οργάνωση δεδομένων ανά ώρα (00 έως 23)
                 let hourlyData = {};
                 for(let h=0; h<24; h++) {
                     let hourKey = h.toString().padStart(2, '0') + ':00';
@@ -190,7 +195,7 @@
                     }
                 });
 
-                // Γέμισμα κενών (interpolation)
+                // Interpolation (Γέμισμα κενών)
                 let lastYest = null, lastToday = null;
                 Object.keys(hourlyData).forEach(hour => {
                     if(hourlyData[hour].yest !== null) lastYest = hourlyData[hour].yest;
