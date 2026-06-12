@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Beekeeping Pro - 15 Day Comparison</title>
+    <title>Beekeeping Pro - Realtime 24h & History</title>
     <script src="https://www.gstatic.com/charts/loader.js"></script>
     <style>
         :root { --bg: #121212; --card: #1e1e1e; --text: #ffffff; --accent: #1a73e8; --border: #333; }
@@ -43,11 +43,11 @@
 <body>
 
     <div class="main-yield-banner">
-        <div class="main-yield-label">ΔΙΑΦΟΡΑ 24Ω (21:00 - 21:00)</div>
+        <div class="main-yield-label">ΖΩΝΤΑΝΗ ΔΙΑΦΟΡΑ 24ΩΡΟΥ (ΤΡΕΧΟΥΣΑ vs ΕΧΘΕΣ ΙΔΙΑ ΩΡΑ)</div>
         <div id="24hYieldMain" class="main-yield-val">--</div>
     </div>
 
-    <div style="font-size: 0.7em; color: #888; margin-bottom: 5px; text-align: center;">ΙΣΤΟΡΙΚΟ 15 ΗΜΕΡΩΝ (σε gr)</div>
+    <div style="font-size: 0.7em; color: #888; margin-bottom: 5px; text-align: center;">ΙΣΤΟΡΙΚΟ 15 ΗΜΕΡΩΝ (21:00 - 21:00 σε gr)</div>
     <div class="history-container" id="historyLog"></div>
 
     <div class="last-update" id="mainUpdate">🕒 Φόρτωση...</div>
@@ -93,20 +93,19 @@
 
         async function updateHivesInfo() {
             try {
-                // Αυξάνουμε τις ημέρες σε 20 για να καλύψουμε άνετα το ιστορικό 15 ημερών
                 const res = await fetch(`https://api.thingspeak.com/channels/${channelID}/feeds.json?api_key=${readAPIKey}&days=20`);
                 if(!res.ok) throw new Error("API Error");
                 const data = await res.json();
                 const feeds = data.feeds;
                 if(!feeds || !feeds.length) return;
 
-                // Συναρτηση ακριβείας για λήψη βάρους αυστηρά στις 21:00
+                // 1. ΣΥΝΑΡΤΗΣΗ ΑΥΣΤΗΡΑ ΓΙΑ ΤΟ ΙΣΤΟΡΙΚΟ (ΜΟΝΟ 21:00)
                 const getWeightAt21 = (targetDate) => {
                     const target = new Date(targetDate);
                     target.setHours(21, 0, 0, 0);
 
                     const now = new Date();
-                    // ΚΑΝΟΝΑΣ 12 ΜΕΣΑΝΥΧΤΑ: Αν η ζητούμενη μέρα είναι η σημερινή και δεν έχουμε φτάσει ακόμα 21:00, επέστρεψε null (δείξε --)
+                    // Αν είναι σήμερα και δεν πήγε 21:00 ακόμα, επιστρέφει null (δείχνει --)
                     if (target.toDateString() === now.toDateString() && now.getHours() < 21) {
                         return null;
                     }
@@ -119,7 +118,6 @@
 
                     if(dayFeeds.length === 0) return null;
 
-                    // Επιλογή της μέτρησης που είναι πιο κοντά στις 21:00
                     const closest = dayFeeds.reduce((prev, curr) => {
                         const prevDiff = Math.abs(new Date(prev.created_at) - target);
                         const currDiff = Math.abs(new Date(curr.created_at) - target);
@@ -129,23 +127,46 @@
                     return parseFloat(closest.field1);
                 };
 
-                // Κεντρικό Banner 24ώρου (21:00 - 21:00)
-                const wToday = getWeightAt21(new Date());
-                const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
-                const wYest = getWeightAt21(yestDate);
+                // 2. ΝΕΑ ΛΟΓΙΚΗ: ΖΩΝΤΑΝΗ ΔΙΑΦΟΡΑ 24ΩΡΟΥ ΓΙΑ ΤΟ ΚΕΝΤΡΙΚΟ BANNER
+                // Παίρνουμε την τελευταία διαθέσιμη καταγραφή της ζυγαριάς
+                const validFeeds = feeds.filter(f => f.field1 !== null && !isNaN(parseFloat(f.field1)));
+                const latestFeed = validFeeds[validFeeds.length - 1];
                 
-                const mainEl = document.getElementById('24hYieldMain');
-                
-                if (wToday !== null && wYest !== null) {
-                    const diffMain = ((wToday - wYest) * 1000).toFixed(0);
-                    mainEl.innerText = `${diffMain > 0 ? '+' : ''}${diffMain} gr`;
-                    mainEl.style.color = diffMain >= 0 ? '#4caf50' : '#ff5252';
-                } else { 
-                    mainEl.innerText = "-- gr"; 
-                    mainEl.style.color = "#888";
+                let realtimeDiffText = "-- gr";
+                let realtimeColor = "#888";
+
+                if (latestFeed) {
+                    const currentWeight = parseFloat(latestFeed.field1);
+                    const currentTime = new Date(latestFeed.created_at);
+                    
+                    // Στοχεύουμε ακριβώς 24 ώρες πριν από αυτή τη μέτρηση
+                    const targetPastTime = new Date(currentTime.getTime() - (24 * 60 * 60 * 1000));
+                    
+                    // Βρίσκουμε την πιο κοντινή μέτρηση εκείνης της ώρας
+                    const pastFeeds = feeds.filter(f => f.field1 !== null && !isNaN(parseFloat(f.field1)));
+                    if (pastFeeds.length > 0) {
+                        const closestPast = pastFeeds.reduce((prev, curr) => {
+                            const prevDiff = Math.abs(new Date(prev.created_at) - targetPastTime);
+                            const currDiff = Math.abs(new Date(curr.created_at) - targetPastTime);
+                            return currDiff < prevDiff ? curr : prev;
+                        });
+                        
+                        // Έλεγχος αν η μέτρηση όντως ανήκει στο σωστό 24ωρο παράθυρο
+                        if (Math.abs(new Date(closestPast.created_at) - targetPastTime) < (2 * 60 * 60 * 1000)) {
+                            const pastWeight = parseFloat(closestPast.field1);
+                            const diff = ((currentWeight - pastWeight) * 1000).toFixed(0);
+                            realtimeDiffText = `${diff > 0 ? '+' : ''}${diff} gr`;
+                            realtimeColor = diff >= 0 ? '#4caf50' : '#ff5252';
+                        }
+                    }
                 }
 
-                // Σταδιακό Γέμισμα Ιστορικού 15 Ημερών
+                // Ενημέρωση μεγάλου Banner
+                const mainEl = document.getElementById('24hYieldMain');
+                mainEl.innerText = realtimeDiffText;
+                mainEl.style.color = realtimeColor;
+
+                // 3. ΣΤΑΔΙΑΚΟ ΓΕΜΙΣΜΑ ΙΣΤΟΡΙΚΟΥ 15 ΗΜΕΡΩΝ (ΑΥΣΤΗΡΑ 21:00 - 21:00)
                 const historyLog = document.getElementById('historyLog');
                 historyLog.innerHTML = '';
                 for (let i = 0; i < 15; i++) {
@@ -174,6 +195,7 @@
                 compareTable.addColumn('number', 'Σήμερα');
 
                 const todayStr = new Date().toDateString();
+                const yestDate = new Date(); yestDate.setDate(yestDate.getDate() - 1);
                 const yestStr = yestDate.toDateString();
 
                 let hourlyData = {};
